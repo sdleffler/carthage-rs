@@ -236,15 +236,6 @@ mod tests {
         );
     }
 
-    //     fn lex_file(path: &Path) -> Result<usize, Error> {
-    //         let mut file = File::open(path).unwrap();
-    //         let mut string = String::new();
-    //         file.read_to_string(&mut string).unwrap();
-    //
-    //         let lexer = Lexer::new(&string, 0);
-    //         lexer.collect::<Result<Vec<_>, _>>().map(|vec| vec.len())
-    //     }
-
     macro_rules! lex_test_files {
         (@test $(#[$m:meta])* $test:ident) => {
             lex_test_files!(@test $(#[$m:meta])* $test where path = stringify!($test));
@@ -381,64 +372,4 @@ mod tests {
             nt_syntax_uri_04 where path = "nt-syntax-uri-04",
         }
     }
-
-    //     #[test]
-    //     fn lex_w3c_test_suite() {
-    //         let test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ntriples-tests");
-    //         let results = test_dir
-    //             .read_dir()
-    //             .unwrap()
-    //             .filter_map(|res| {
-    //                 let filtered_result = res.map(|entry| {
-    //                     let path = entry.path();
-    //
-    //                     if path.extension() == Some(OsStr::new("nt")) {
-    //                         let result = lex_file(&path);
-    //                         Some((path, result))
-    //                     } else {
-    //                         None
-    //                     }
-    //                 });
-    //
-    //                 match filtered_result {
-    //                     Ok(Some(t)) => Some(Ok(t)),
-    //                     Ok(None) => None,
-    //                     Err(e) => Some(Err(e)),
-    //                 }
-    //             })
-    //             .collect::<Result<Vec<_>, _>>()
-    //             .unwrap();
-    //
-    //         let total = results.len();
-    //         let mut passed = 0;
-    //         let mut failed = 0;
-    //
-    //         for &(ref path, ref result) in &results {
-    //             // Simple and silly heuristic: if the filename contains "bad", it's a test intended to
-    //             // fail.
-    //             let should_pass = !path.file_name().unwrap().to_str().unwrap().contains("bad");
-    //             let pass_fail = if result.is_ok() == should_pass {
-    //                 passed += 1;
-    //                 "PASS"
-    //             } else {
-    //                 failed += 1;
-    //                 "FAIL"
-    //             };
-    //
-    //             print!("[{}] {}", pass_fail, path.display());
-    //             match *result {
-    //                 Ok(n_tokens) if should_pass => print!(", {} tokens parsed", n_tokens),
-    //                 Err(error) if should_pass => print!("\n\t{:?}", error),
-    //                 _ => {}
-    //             }
-    //             println!();
-    //         }
-    //
-    //         println!(
-    //             "{} files lexed, {} passed, {} failed",
-    //             total, passed, failed
-    //         );
-    //
-    //         assert!(results.iter().all(|r| r.1.is_ok()));
-    //     }
 }

@@ -10,4 +10,7 @@ lalrpop = "0.14.0"
 [dependencies]
 lalrpop-util = "0.14.0"
 lazy_static = "1.0.0"
+petgraph = "0.4.11"
 regex = "0.2.1"
+string-interner = "0.6.3"
+url = "1.7.0"

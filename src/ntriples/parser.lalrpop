@@ -1,0 +1,41 @@
+use ntriples::ast::{Document, Triple, Subject, Object, Literal, Datatype};
+use ntriples::lexer::{self, Token};
+
+grammar<'input>(text: &'input str);
+
+pub Document: Document<'input> = <head:Triple?> <body:("EOL" Triple)*> "EOL"? => Document { triples: vec![] };
+
+pub Triple: Triple<'input> = <subject:Subject> <predicate:"IRIREF"> <object:Object> "." => Triple {<>};
+
+pub Subject: Subject<'input> = {
+    "IRIREF" => Subject::IriRef(<>),
+    "BLANK_NODE_LABEL" => Subject::BlankNodeLabel(<>),
+};
+
+pub Object: Object<'input> = {
+    "IRIREF" => Object::IriRef(<>),
+    "BLANK_NODE_LABEL" => Object::BlankNodeLabel(<>),
+    Literal => Object::Literal(<>),
+};
+
+pub Literal: Literal<'input> = <value:"STRING_LITERAL_QUOTE"> <datatype:Datatype?> => Literal {<>};
+
+pub Datatype: Datatype<'input> = {
+    "^^" <"IRIREF"> => Datatype::IriRef(<>),
+    "LANGTAG" => Datatype::LangTag(<>),
+};
+
+extern {
+    type Location = usize;
+    type Error = lexer::Error;
+
+    enum Token<'input> {
+        "EOL" => Token::Eol,
+        "." => Token::Period,
+        "^^" => Token::DoubleCaret,
+        "LANGTAG" => Token::LangTag(<&'input str>),
+        "IRIREF" => Token::IriRef(<&'input str>),
+        "STRING_LITERAL_QUOTE" => Token::StringLiteral(<&'input str>),
+        "BLANK_NODE_LABEL" => Token::BlankNodeLabel(<&'input str>),
+    }
+}
