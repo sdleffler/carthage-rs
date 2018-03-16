@@ -1,0 +1,13 @@
+[package]
+authors = ["Sean Leffler <sean@errno.com>"]
+build = "build.rs"
+name = "carthage"
+version = "0.1.0"
+
+[build-dependencies]
+lalrpop = "0.14.0"
+
+[dependencies]
+lalrpop-util = "0.14.0"
+lazy_static = "1.0.0"
+regex = "0.2.1"
