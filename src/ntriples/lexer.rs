@@ -13,9 +13,10 @@ lazy_static! {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Token<'input> {
-    LangTag(&'input str),
     Eol,
     Period,
+    DoubleCaret,
+    LangTag(&'input str),
     IriRef(&'input str),
     StringLiteral(&'input str),
     BlankNodeLabel(&'input str),
@@ -135,10 +136,14 @@ impl<'input> Lexer<'input> {
                     self.lookahead = self.char_indices
                         .by_ref()
                         .skip_while(|&(_, c)| c != '\n' && c != '\r')
+                        .skip_while(|&(_, c)| c == '\n' || c == '\r')
                         .next();
                     continue;
                 }
                 Some((idx0, '.')) => Ok((idx0, Token::Period, idx0 + 1)),
+                Some((idx0, '^')) if self.text[idx0..].starts_with("^^") => {
+                    Ok((idx0, Token::DoubleCaret, idx0 + 2))
+                }
                 Some((idx0, c)) if c == '\n' || c == '\r' => self.eol(idx0),
                 Some((idx0, '@')) => self.lang_tag(idx0),
                 Some((idx0, '<')) => self.iri_ref(idx0),
@@ -150,7 +155,7 @@ impl<'input> Lexer<'input> {
 
             if let Ok(ref spanned) = spanned_res {
                 assert!(spanned.2 > spanned.0);
-                self.lookahead = self.char_indices.by_ref().nth(spanned.2 - spanned.0);
+                self.lookahead = self.char_indices.nth(spanned.2 - spanned.0 - 1);
             }
 
             return Some(spanned_res);
@@ -177,7 +182,7 @@ impl<'input> Iterator for Lexer<'input> {
 mod tests {
     use super::*;
 
-    use std::{ffi::OsStr, fs::File, io::Read, path::{Path, PathBuf}};
+    use std::{fs::File, io::Read, path::{Path, PathBuf}};
 
     #[test]
     fn lang_tag_0() {
@@ -231,68 +236,209 @@ mod tests {
         );
     }
 
-    fn lex_file(path: &Path) -> Result<usize, Error> {
-        let mut file = File::open(path).unwrap();
-        let mut string = String::new();
-        file.read_to_string(&mut string).unwrap();
+    //     fn lex_file(path: &Path) -> Result<usize, Error> {
+    //         let mut file = File::open(path).unwrap();
+    //         let mut string = String::new();
+    //         file.read_to_string(&mut string).unwrap();
+    //
+    //         let lexer = Lexer::new(&string, 0);
+    //         lexer.collect::<Result<Vec<_>, _>>().map(|vec| vec.len())
+    //     }
 
-        let lexer = Lexer::new(&string, 0);
-        lexer.collect::<Result<Vec<_>, _>>().map(|vec| vec.len())
+    macro_rules! lex_test_files {
+        (@test $(#[$m:meta])* $test:ident) => {
+            lex_test_files!(@test $(#[$m:meta])* $test where path = stringify!($test));
+        };
+        (@test $(#[$m:meta])* $test:ident where path = $path:expr) => {
+            #[test]
+            $(#[$m])*
+            fn $test() {
+                let string = {
+                    let mut path = PathBuf::from("ntriples-tests");
+                    path.push(String::from($path) + ".nt");
+                    let mut file = File::open(path).unwrap();
+                    let mut buf = String::new();
+                    file.read_to_string(&mut buf).unwrap();
+                    buf
+                };
+
+                let lexer = Lexer::new(&string, 0);
+                let mut tokens_parsed = 0;
+
+                for token_res in lexer {
+                    match token_res {
+                        Ok(token) => {
+                            println!("Parsed token {} as {:?}", tokens_parsed, token);
+                            tokens_parsed += 1;
+                        },
+                        Err(error) => panic!("{} tokens parsed before failure: {:?}", tokens_parsed, error),
+                    }
+                }
+            }
+        };
+        ($( $test_name:ident { $($(#[$m:meta])* $test:ident $(where $opt:tt = $val:expr)*,)* } )*) => {
+            $(
+                mod $test_name {
+                    use super::*;
+
+                    $(lex_test_files!(@test $(#[$m])* $test $(where $opt = $val)*);)*
+                }
+            )*
+        };
     }
 
-    #[test]
-    fn lex_w3c_test_suite() {
-        let test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ntriples-tests");
-        let results = test_dir
-            .read_dir()
-            .unwrap()
-            .filter_map(|res| {
-                let filtered_result = res.map(|entry| {
-                    let path = entry.path();
-
-                    if path.extension() == Some(OsStr::new("nt")) {
-                        let result = lex_file(&path);
-                        Some((path, result))
-                    } else {
-                        None
-                    }
-                });
-
-                match filtered_result {
-                    Ok(Some(t)) => Some(Ok(t)),
-                    Ok(None) => None,
-                    Err(e) => Some(Err(e)),
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
-        let total = results.len();
-        let mut passed = 0;
-        let mut failed = 0;
-
-        for &(ref path, ref result) in &results {
-            // Simple and silly heuristic: if the filename contains "bad", it's a test intended to
-            // fail.
-            let should_pass = !path.file_name().unwrap().to_str().unwrap().contains("bad");
-            let pass_fail = if result.is_ok() == should_pass {
-                passed += 1;
-                "PASS"
-            } else {
-                failed += 1;
-                "FAIL"
-            };
-
-            print!("[{}] {}", pass_fail, path.display());
-            match *result {
-                Ok(n_tokens) => print!(", {} tokens parsed", n_tokens),
-                Err(error) => print!("\n\t{:?}", error),
-            }
-            println!();
+    lex_test_files! {
+        arbitrary {
+            test,
         }
 
-        println!("{} files lexed, {} passed, {} failed", total, passed, failed);
+        w3c {
+            comment_following_triple,
+            langtagged_string,
+            lantag_with_subtag,
+            literal_all_controls,
+            literal_all_punctuation,
+            literal_ascii_boundaries,
+            literal_false,
+            literal,
+            literal_true,
+            literal_with_2_dquotes,
+            literal_with_2_squotes,
+            literal_with_backspace where path = "literal_with_BACKSPACE",
+            literal_with_carriage_return where path = "literal_with_CARRIAGE_RETURN",
+            literal_with_character_tabulation where path = "literal_with_CHARACTER_TABULATION",
+            literal_with_dquote,
+            literal_with_form_feed where path = "literal_with_FORM_FEED",
+            literal_with_line_feed where path = "literal_with_LINE_FEED",
+            literal_with_numeric_escape4,
+            literal_with_numeric_escape8,
+            literal_with_reverse_solidus2 where path = "literal_with_REVERSE_SOLIDUS2",
+            literal_with_reverse_solidus where path = "literal_with_REVERSE_SOLIDUS",
+            literal_with_squote,
+            literal_with_utf8_boundaries where path = "literal_with_UTF8_boundaries",
+            minimal_whitespace,
 
-        assert!(results.iter().all(|r| r.1.is_ok()));
+            // Shouldn't panic - will *lex* just fine. Caught during parsing.
+            nt_syntax_bad_base_01 where path = "nt-syntax-bad-base-01",
+
+            #[should_panic] nt_syntax_bad_esc_01 where path = "nt-syntax-bad-esc-01",
+            #[should_panic] nt_syntax_bad_esc_02 where path = "nt-syntax-bad-esc-02",
+            #[should_panic] nt_syntax_bad_esc_03 where path = "nt-syntax-bad-esc-03",
+            #[should_panic] nt_syntax_bad_lang_01 where path = "nt-syntax-bad-lang-01",
+            #[should_panic] nt_syntax_bad_num_01 where path = "nt-syntax-bad-num-01",
+            #[should_panic] nt_syntax_bad_num_02 where path = "nt-syntax-bad-num-02",
+            #[should_panic] nt_syntax_bad_num_03 where path = "nt-syntax-bad-num-03",
+            #[should_panic] nt_syntax_bad_prefix_01 where path = "nt-syntax-bad-prefix-01",
+            #[should_panic] nt_syntax_bad_string_01 where path = "nt-syntax-bad-string-01",
+            #[should_panic] nt_syntax_bad_string_02 where path = "nt-syntax-bad-string-02",
+            #[should_panic] nt_syntax_bad_string_03 where path = "nt-syntax-bad-string-03",
+            #[should_panic] nt_syntax_bad_string_04 where path = "nt-syntax-bad-string-04",
+
+            // Shouldn't panic - will *lex* just fine. Caught during parsing.
+            nt_syntax_bad_string_05 where path = "nt-syntax-bad-string-05",
+
+            #[should_panic] nt_syntax_bad_string_06 where path = "nt-syntax-bad-string-06",
+            #[should_panic] nt_syntax_bad_string_07 where path = "nt-syntax-bad-string-07",
+            #[should_panic] nt_syntax_bad_struct_01 where path = "nt-syntax-bad-struct-01",
+            #[should_panic] nt_syntax_bad_struct_02 where path = "nt-syntax-bad-struct-02",
+
+            #[should_panic] nt_syntax_bad_uri_01 where path = "nt-syntax-bad-uri-01",
+            #[should_panic] nt_syntax_bad_uri_02 where path = "nt-syntax-bad-uri-02",
+            #[should_panic] nt_syntax_bad_uri_03 where path = "nt-syntax-bad-uri-03",
+            #[should_panic] nt_syntax_bad_uri_04 where path = "nt-syntax-bad-uri-04",
+            #[should_panic] nt_syntax_bad_uri_05 where path = "nt-syntax-bad-uri-05",
+
+            // Following bad-uri tests are parse-fails, not lex-fails
+            nt_syntax_bad_uri_06 where path = "nt-syntax-bad-uri-06",
+            nt_syntax_bad_uri_07 where path = "nt-syntax-bad-uri-07",
+            nt_syntax_bad_uri_08 where path = "nt-syntax-bad-uri-08",
+            nt_syntax_bad_uri_09 where path = "nt-syntax-bad-uri-09",
+
+            nt_syntax_bad_bnode_01 where path = "nt-syntax-bnode-01",
+            nt_syntax_bad_bnode_02 where path = "nt-syntax-bnode-02",
+            nt_syntax_bad_bnode_03 where path = "nt-syntax-bnode-03",
+
+            nt_syntax_datatypes_01 where path = "nt-syntax-datatypes-01",
+            nt_syntax_datatypes_02 where path = "nt-syntax-datatypes-02",
+
+            nt_syntax_file_01 where path = "nt-syntax-file-01",
+            nt_syntax_file_02 where path = "nt-syntax-file-02",
+            nt_syntax_file_03 where path = "nt-syntax-file-03",
+
+            nt_syntax_str_esc_01 where path = "nt-syntax-str-esc-01",
+            nt_syntax_str_esc_02 where path = "nt-syntax-str-esc-02",
+            nt_syntax_str_esc_03 where path = "nt-syntax-str-esc-03",
+
+            nt_syntax_string_01 where path = "nt-syntax-string-01",
+            nt_syntax_string_02 where path = "nt-syntax-string-02",
+            nt_syntax_string_03 where path = "nt-syntax-string-03",
+
+            nt_syntax_subm_01 where path = "nt-syntax-subm-01",
+
+            nt_syntax_uri_01 where path = "nt-syntax-uri-01",
+            nt_syntax_uri_02 where path = "nt-syntax-uri-02",
+            nt_syntax_uri_03 where path = "nt-syntax-uri-03",
+            nt_syntax_uri_04 where path = "nt-syntax-uri-04",
+        }
     }
+
+    //     #[test]
+    //     fn lex_w3c_test_suite() {
+    //         let test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ntriples-tests");
+    //         let results = test_dir
+    //             .read_dir()
+    //             .unwrap()
+    //             .filter_map(|res| {
+    //                 let filtered_result = res.map(|entry| {
+    //                     let path = entry.path();
+    //
+    //                     if path.extension() == Some(OsStr::new("nt")) {
+    //                         let result = lex_file(&path);
+    //                         Some((path, result))
+    //                     } else {
+    //                         None
+    //                     }
+    //                 });
+    //
+    //                 match filtered_result {
+    //                     Ok(Some(t)) => Some(Ok(t)),
+    //                     Ok(None) => None,
+    //                     Err(e) => Some(Err(e)),
+    //                 }
+    //             })
+    //             .collect::<Result<Vec<_>, _>>()
+    //             .unwrap();
+    //
+    //         let total = results.len();
+    //         let mut passed = 0;
+    //         let mut failed = 0;
+    //
+    //         for &(ref path, ref result) in &results {
+    //             // Simple and silly heuristic: if the filename contains "bad", it's a test intended to
+    //             // fail.
+    //             let should_pass = !path.file_name().unwrap().to_str().unwrap().contains("bad");
+    //             let pass_fail = if result.is_ok() == should_pass {
+    //                 passed += 1;
+    //                 "PASS"
+    //             } else {
+    //                 failed += 1;
+    //                 "FAIL"
+    //             };
+    //
+    //             print!("[{}] {}", pass_fail, path.display());
+    //             match *result {
+    //                 Ok(n_tokens) if should_pass => print!(", {} tokens parsed", n_tokens),
+    //                 Err(error) if should_pass => print!("\n\t{:?}", error),
+    //                 _ => {}
+    //             }
+    //             println!();
+    //         }
+    //
+    //         println!(
+    //             "{} files lexed, {} passed, {} failed",
+    //             total, passed, failed
+    //         );
+    //
+    //         assert!(results.iter().all(|r| r.1.is_ok()));
+    //     }
 }
