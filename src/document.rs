@@ -1,4 +1,5 @@
-use std::{collections::{Bound, HashMap, btree_map::{BTreeMap, Entry},
+use std::{usize,
+          collections::{Bound, HashMap, btree_map::{BTreeMap, Entry, Keys},
                         btree_set::{BTreeSet, Range}},
           str::FromStr, sync::atomic::{AtomicUsize, Ordering}};
 
@@ -22,8 +23,15 @@ impl From<Url> for Iri {
     }
 }
 
+impl Iri {
+    /// Get this IRI as a formatted string.
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
 /// A blank node is an anonymous node with respect to one particular document.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Blank {
     doc_id: usize,
     node_id: usize,
@@ -292,18 +300,31 @@ impl Document {
     pub fn search_index(&self, term: Term) -> Search {
         assert!(self.supported_indices.contains(term.index_of()));
 
-        let start = (term, 0usize);
+        let start = (term.clone(), usize::MIN);
+        let end = (term, usize::MAX);
 
         let iter = self.index
-            .range((Bound::Included(&start), Bound::Unbounded));
-        let term = start.0;
+            .range((Bound::Included(&start), Bound::Included(&end)));
         let triples = &self.triples;
 
-        Search {
-            term,
-            iter,
-            triples,
+        Search { iter, triples }
+    }
+
+    /// Iterate over all triples in the store. This iterator goes in ascending order with respect
+    /// to the `Ord` instance of `Triple`.
+    pub fn iter(&self) -> Iter {
+        Iter {
+            unique: self.unique.keys(),
         }
+    }
+}
+
+impl Extend<Triple> for Document {
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = Triple>,
+    {
+        iter.into_iter().for_each(|triple| self.insert(triple));
     }
 }
 
@@ -311,7 +332,6 @@ impl Document {
 /// search `Term`.
 #[derive(Clone)]
 pub struct Search<'a> {
-    term: Term,
     iter: Range<'a, (Term, usize)>,
     triples: &'a HashMap<usize, Triple>,
 }
@@ -321,15 +341,24 @@ impl<'a> Iterator for Search<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let Search {
-            ref term,
             ref mut iter,
             triples,
         } = *self;
 
-        // If we used `filter` instead of `take_while` we'd end up going through the entire index.
-        iter.by_ref()
-            .take_while(|&&(ref index_term, _)| index_term == term)
-            .map(|&(_, ref id)| &triples[id])
-            .next()
+        iter.next().map(|&(_, ref id)| &triples[id])
+    }
+}
+
+/// An iterator over all triples in a document.
+#[derive(Clone)]
+pub struct Iter<'a> {
+    unique: Keys<'a, Triple, usize>,
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = &'a Triple;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.unique.next()
     }
 }
