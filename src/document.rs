@@ -1,7 +1,7 @@
 use std::{usize,
           collections::{Bound, HashMap, btree_map::{BTreeMap, Entry, Keys},
                         btree_set::{BTreeSet, Range}},
-          str::FromStr, sync::atomic::{AtomicUsize, Ordering}};
+          str::FromStr, sync::atomic::{AtomicUsize, Ordering}, u32};
 
 use failure::*;
 use regex::Regex;
@@ -33,8 +33,8 @@ impl Iri {
 /// A blank node is an anonymous node with respect to one particular document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Blank {
-    doc_id: usize,
-    node_id: usize,
+    doc_id: u32,
+    node_id: u32,
 }
 
 /// RDF subjects are either IRIs or blank nodes.
@@ -47,7 +47,7 @@ pub enum Subject {
 impl Subject {
     /// If the given subject is a blank node, then check to see whether the blank node originates
     /// from the given document. Otherwise, the subject is vacuously from the given document.
-    fn has_doc_id(&self, doc_id: usize) -> bool {
+    fn has_doc_id(&self, doc_id: u32) -> bool {
         match *self {
             Subject::Blank(ref blank) => blank.doc_id == doc_id,
             _ => true,
@@ -66,7 +66,7 @@ pub enum Object {
 impl Object {
     /// If the given object is a blank node, then check to see whether the blank node originates
     /// from the given document. Otherwise, the object is vacuously from the given document.
-    fn has_doc_id(&self, doc_id: usize) -> bool {
+    fn has_doc_id(&self, doc_id: u32) -> bool {
         match *self {
             Object::Blank(ref blank) => blank.doc_id == doc_id,
             _ => true,
@@ -141,7 +141,7 @@ pub struct Triple {
 
 impl Triple {
     /// Check whether or not all blank nodes in this triple originate from the given document.
-    fn has_doc_id(&self, doc_id: usize) -> bool {
+    fn has_doc_id(&self, doc_id: u32) -> bool {
         // Predicates are only ever IRIs, no need to check.
         self.subject.has_doc_id(doc_id) && self.object.has_doc_id(doc_id)
     }
@@ -190,9 +190,9 @@ bitflags! {
 
 #[derive(Debug)]
 pub struct Document {
-    doc_id: usize,
+    doc_id: u32,
 
-    next_blank: usize,
+    next_blank: u32,
     next_triple: usize,
 
     supported_indices: Indices,
@@ -205,7 +205,11 @@ pub struct Document {
 impl Document {
     /// Create a new RDF document which supports efficient indexing over the given search terms.
     pub fn new(supported_indices: Indices) -> Self {
-        let doc_id = DOC_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let doc_id = {
+            let tmp = DOC_COUNTER.fetch_add(1, Ordering::Relaxed);
+            assert!(tmp <= u32::MAX as usize);
+            tmp as u32
+        };
 
         Self {
             doc_id,
