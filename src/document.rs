@@ -1,4 +1,4 @@
-use std::{usize,
+use std::{fmt, usize,
           collections::{Bound, HashMap, btree_map::{BTreeMap, Entry, Keys},
                         btree_set::{BTreeSet, Range}},
           str::FromStr, sync::atomic::{AtomicUsize, Ordering}, u32};
@@ -17,9 +17,12 @@ static DOC_COUNTER: AtomicUsize = AtomicUsize::new(0);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Iri(RdfAtom);
 
-impl From<Url> for Iri {
-    fn from(url: Url) -> Self {
-        Iri(RdfAtom::from(url.as_str()))
+impl FromStr for Iri {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let url = Url::parse(s)?;
+        Ok(Iri(RdfAtom::from(url.as_str())))
     }
 }
 
@@ -30,11 +33,23 @@ impl Iri {
     }
 }
 
+impl fmt::Display for Iri {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A blank node is an anonymous node with respect to one particular document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Blank {
     doc_id: u32,
     node_id: u32,
+}
+
+impl Blank {
+    pub fn to_id(&self) -> u64 {
+        ((self.doc_id as u64) << 32) | (self.node_id as u64)
+    }
 }
 
 /// RDF subjects are either IRIs or blank nodes.
@@ -112,6 +127,18 @@ impl Literal {
             lang: None,
         }
     }
+
+    pub fn as_value(&self) -> &str {
+        &self.value
+    }
+
+    pub fn as_ty(&self) -> &Iri {
+        &self.ty
+    }
+
+    pub fn as_lang_tag(&self) -> Option<&LangTag> {
+        self.lang.as_ref()
+    }
 }
 
 /// A valid language tag.
@@ -128,6 +155,12 @@ impl FromStr for LangTag {
 
         ensure!(RE.is_match(string), "bad language tag!");
         Ok(LangTag(RdfAtom::from(string)))
+    }
+}
+
+impl fmt::Display for LangTag {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 

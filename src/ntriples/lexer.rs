@@ -1,4 +1,4 @@
-use std::str::CharIndices;
+use std::{fmt, str::CharIndices};
 
 use regex::Regex;
 
@@ -22,7 +22,22 @@ pub enum Token<'input> {
     BlankNodeLabel(&'input str),
 }
 
-#[derive(Debug, Clone, Copy)]
+impl<'input> fmt::Display for Token<'input> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Token::Eol => writeln!(f, ""),
+            Token::Period => writeln!(f, "."),
+            Token::DoubleCaret => writeln!(f, "^^"),
+            Token::LangTag(string) => writeln!(f, "@{}", string),
+            Token::IriRef(string) => writeln!(f, "<{}>", string),
+            Token::StringLiteral(string) => writeln!(f, "\"{}\"", string),
+            Token::BlankNodeLabel(string) => writeln!(f, "_:{}", string),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Fail)]
+#[fail(display = "lexer error {:?} at byte {:?}", location, kind)]
 pub struct Error {
     pub location: usize,
     pub kind: ErrorKind,
@@ -129,14 +144,16 @@ impl<'input> Lexer<'input> {
         loop {
             let spanned_res = match self.lookahead.take() {
                 Some((_, c)) if c == ' ' || c == '\t' => {
-                    self.lookahead = self.char_indices.next();
+                    self.lookahead = self.char_indices
+                        .by_ref()
+                        .skip_while(|&(_, c)| c == ' ' || c == '\t')
+                        .next();
                     continue;
                 }
                 Some((_, '#')) => {
                     self.lookahead = self.char_indices
                         .by_ref()
                         .skip_while(|&(_, c)| c != '\n' && c != '\r')
-                        .skip_while(|&(_, c)| c == '\n' || c == '\r')
                         .next();
                     continue;
                 }
@@ -155,7 +172,10 @@ impl<'input> Lexer<'input> {
 
             if let Ok(ref spanned) = spanned_res {
                 assert!(spanned.2 > spanned.0);
-                self.lookahead = self.char_indices.nth(spanned.2 - spanned.0 - 1);
+                self.lookahead = self.char_indices
+                    .by_ref()
+                    .skip_while(|&(idx, _)| idx < spanned.2)
+                    .next();
             }
 
             return Some(spanned_res);
@@ -345,9 +365,9 @@ mod tests {
             nt_syntax_bad_uri_08 where path = "nt-syntax-bad-uri-08",
             nt_syntax_bad_uri_09 where path = "nt-syntax-bad-uri-09",
 
-            nt_syntax_bad_bnode_01 where path = "nt-syntax-bnode-01",
-            nt_syntax_bad_bnode_02 where path = "nt-syntax-bnode-02",
-            nt_syntax_bad_bnode_03 where path = "nt-syntax-bnode-03",
+            nt_syntax_bnode_01 where path = "nt-syntax-bnode-01",
+            nt_syntax_bnode_02 where path = "nt-syntax-bnode-02",
+            nt_syntax_bnode_03 where path = "nt-syntax-bnode-03",
 
             nt_syntax_datatypes_01 where path = "nt-syntax-datatypes-01",
             nt_syntax_datatypes_02 where path = "nt-syntax-datatypes-02",

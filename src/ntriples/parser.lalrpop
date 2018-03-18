@@ -3,7 +3,11 @@ use ntriples::lexer::{self, Token};
 
 grammar<'input>(text: &'input str);
 
-pub Document: Document<'input> = <head:Triple?> <body:("EOL" Triple)*> "EOL"? => Document { triples: vec![] };
+pub Document: Document<'input> = <head:Triple?> <body:("EOL"+ Triple)*> "EOL"* => Document {
+    triples: head.into_iter()
+        .chain(body.into_iter().map(|(_, triple)| triple))
+        .collect(),
+};
 
 pub Triple: Triple<'input> = <subject:Subject> <predicate:"IRIREF"> <object:Object> "." => Triple {<>};
 
