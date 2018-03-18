@@ -13,6 +13,9 @@ use failure::*;
 use document::{Blank, Document, Indices, Literal, Object, Predicate, Subject, Triple};
 use rdf::RdfAtom;
 
+/// Wrapper type for interned strings which hashes on the string data instead of the ID of the
+/// interned string, thus allowing it to safely implement `Borrow<str>` and be used as a convenient
+/// key in hashmaps.
 #[derive(Debug, PartialEq, Eq)]
 struct Stringy(RdfAtom);
 
@@ -31,6 +34,9 @@ impl Hash for Stringy {
     }
 }
 
+/// A document in N-Triples format. This is a wrapper over the `Document` type which includes a
+/// mapping from strings to blank nodes, which during formatting as N-Triples is inverted and used
+/// to name blank nodes in the output N-Triples.
 #[derive(Debug)]
 pub struct NTriplesDocument {
     blanks: HashMap<Stringy, Blank>,
@@ -64,18 +70,23 @@ impl FromStr for NTriplesDocument {
     type Err = Error;
 
     fn from_str<'a>(string: &'a str) -> Result<Self, Self::Err> {
-        Self::from_str_with_indices(string, Indices::BY_ALL)
+        let mut doc = NTriplesDocument::new(Document::new(Indices::BY_ALL));
+        doc.extend_from_str(string)?;
+        Ok(doc)
     }
 }
 
 impl NTriplesDocument {
-    pub fn from_str_with_indices<S: AsRef<str>>(
-        string: S,
-        indices: Indices,
-    ) -> Result<Self, Error> {
+    /// Create a new `NTriplesDocument` with an empty blank node mapping from a raw RDF document.
+    pub fn new(document: Document) -> Self {
+        NTriplesDocument::from(document)
+    }
+
+    /// Extend the document with N-Triples parsed from the given string. If a parse error results,
+    /// no triples will have been added to the document.
+    pub fn extend_from_str<S: AsRef<str>>(&mut self, string: S) -> Result<(), Error> {
         use self::lexer::Lexer;
 
-        let mut doc = NTriplesDocument::from(Document::new(indices));
         let s = string.as_ref();
         let triples = match parser::parse_Document(s, Lexer::new(s, 0)) {
             Ok(doc) => doc.triples,
@@ -86,14 +97,14 @@ impl NTriplesDocument {
             let subject = match triple.subject {
                 ast::Subject::IriRef(string) => Subject::Iri(string.parse()?),
                 ast::Subject::BlankNodeLabel(string) => {
-                    Subject::Blank(doc.create_named_blank(string))
+                    Subject::Blank(self.create_named_blank(string))
                 }
             };
             let predicate = Predicate(triple.predicate.parse()?);
             let object = match triple.object {
                 ast::Object::IriRef(string) => Object::Iri(string.parse()?),
                 ast::Object::BlankNodeLabel(string) => {
-                    Object::Blank(doc.create_named_blank(string))
+                    Object::Blank(self.create_named_blank(string))
                 }
                 ast::Object::Literal(literal) => {
                     let literal = match literal.datatype {
@@ -110,16 +121,19 @@ impl NTriplesDocument {
                 }
             };
 
-            doc.insert(Triple {
+            self.insert(Triple {
                 subject,
                 predicate,
                 object,
             });
         }
 
-        Ok(doc)
+        Ok(())
     }
 
+    /// Retrieve the `Blank` associated with the given string name. Or, create a new blank node in
+    /// the underlying `Document` and associate it with the given string (if there is no such node
+    /// already.)
     pub fn create_named_blank<S: AsRef<str>>(&mut self, name: S) -> Blank {
         let NTriplesDocument {
             ref mut blanks,
@@ -134,6 +148,7 @@ impl NTriplesDocument {
     }
 }
 
+/// Re-format an `NTriplesDocument` as a string of UTF-8 in valid N-Triples format.
 impl fmt::Display for NTriplesDocument {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut inverse = self.blanks
@@ -207,8 +222,6 @@ mod tests {
             #[test]
             $(#[$m])*
             fn $test() {
-                use super::lexer::Lexer;
-
                 let string = {
                     let mut path = PathBuf::from("ntriples-tests");
                     path.push(String::from($path) + ".nt");
