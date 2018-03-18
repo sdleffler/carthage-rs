@@ -1,7 +1,7 @@
 use ntriples::ast::{Document, Triple, Subject, Object, Literal, Datatype};
 use ntriples::lexer::{self, Token};
 
-grammar<'input>(text: &'input str);
+grammar<'input>;
 
 pub Document: Document<'input> = <head:Triple?> <body:("EOL"+ Triple)*> "EOL"* => Document {
     triples: head.into_iter()

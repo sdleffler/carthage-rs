@@ -88,7 +88,7 @@ impl NTriplesDocument {
         use self::lexer::Lexer;
 
         let s = string.as_ref();
-        let triples = match parser::parse_Document(s, Lexer::new(s, 0)) {
+        let triples = match parser::parse_Document(Lexer::new(s, 0)) {
             Ok(doc) => doc.triples,
             Err(parse_err) => bail!("{}", parse_err),
         };
