@@ -1,7 +1,15 @@
 [package]
 authors = ["Sean Leffler <sean@errno.com>"]
+categories = ["parsing", "parser-implementations", "data-structures"]
+description = "A library for reading and writing RDF text formats and manipulating in-memory RDF graphs."
+documentation = "https://docs.rs/carthage/"
+homepage = "https://github.com/sdleffler/carthage-rs/"
+keywords = ["rdf", "n-triples", "turtle", "parser", "formatter"]
+license = "MPL-2.0"
 build = "build.rs"
 name = "carthage"
+readme = "README.md"
+repository = "https://github.com/sdleffler/carthage-rs/"
 version = "0.1.0"
 
 [build-dependencies]
