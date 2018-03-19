@@ -21,8 +21,14 @@ impl FromStr for Iri {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let url = Url::parse(s)?;
-        Ok(Iri(RdfAtom::from(url.as_str())))
+        let atom = if s != "" {
+            let url = Url::parse(s)?;
+            RdfAtom::from(url.as_str())
+        } else {
+            rdf_atom!("")
+        };
+
+        Ok(Iri(atom))
     }
 }
 
@@ -99,6 +105,36 @@ pub struct Literal {
     value: RdfAtom,
     ty: Iri,
     lang: Option<LangTag>,
+}
+
+impl<'a> From<&'a str> for Literal {
+    fn from(s: &'a str) -> Self {
+        Self::string(s)
+    }
+}
+
+macro_rules! xsd_literal_from_parse {
+    ($($t:ty, $x:tt),* $(,)*) => {
+        $(
+            impl From<$t> for Literal {
+                fn from(t: $t) -> Self {
+                    let ty = Iri(rdf_atom!($x));
+                    Literal::typed(t.to_string().as_str(), ty)
+                }
+            }
+        )*
+    };
+}
+
+xsd_literal_from_parse! {
+    i8, "http://www.w3.org/2001/XMLSchema#byte",
+    i16, "http://www.w3.org/2001/XMLSchema#short",
+    i32, "http://www.w3.org/2001/XMLSchema#int",
+    i64, "http://www.w3.org/2001/XMLSchema#long",
+    u8, "http://www.w3.org/2001/XMLSchema#unsignedByte",
+    u16, "http://www.w3.org/2001/XMLSchema#unsignedShort",
+    u32, "http://www.w3.org/2001/XMLSchema#unsignedInt",
+    u64, "http://www.w3.org/2001/XMLSchema#unsignedLong",
 }
 
 impl Literal {
