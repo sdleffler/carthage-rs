@@ -15,4 +15,4 @@ mod rdf {
 
 pub mod document;
 pub mod ntriples;
-pub mod traits;
+pub mod view;
