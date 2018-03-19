@@ -17,6 +17,13 @@ static DOC_COUNTER: AtomicUsize = AtomicUsize::new(0);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Iri(RdfAtom);
 
+/// Macro to create an IRI from a raw atom, which will only compile if the relevant string is
+/// interned.
+#[macro_export]
+macro_rules! iri {
+    ($interned:tt) => { Iri::unsafe_from_raw_atom(rdf_atom!($interned)) };
+}
+
 impl FromStr for Iri {
     type Err = Error;
 
@@ -33,6 +40,12 @@ impl FromStr for Iri {
 }
 
 impl Iri {
+    /// Create an IRI from a raw interned string. This is dangerous because it does not check that
+    /// the atom is parseable as a valid IRI.
+    pub const fn unsafe_from_raw_atom(atom: RdfAtom) -> Self {
+        Iri(atom)
+    }
+
     /// Get this IRI as a formatted string.
     pub fn as_str(&self) -> &str {
         self.0.as_ref()
@@ -111,30 +124,6 @@ impl<'a> From<&'a str> for Literal {
     fn from(s: &'a str) -> Self {
         Self::string(s)
     }
-}
-
-macro_rules! xsd_literal_from_parse {
-    ($($t:ty, $x:tt),* $(,)*) => {
-        $(
-            impl From<$t> for Literal {
-                fn from(t: $t) -> Self {
-                    let ty = Iri(rdf_atom!($x));
-                    Literal::typed(t.to_string().as_str(), ty)
-                }
-            }
-        )*
-    };
-}
-
-xsd_literal_from_parse! {
-    i8, "http://www.w3.org/2001/XMLSchema#byte",
-    i16, "http://www.w3.org/2001/XMLSchema#short",
-    i32, "http://www.w3.org/2001/XMLSchema#int",
-    i64, "http://www.w3.org/2001/XMLSchema#long",
-    u8, "http://www.w3.org/2001/XMLSchema#unsignedByte",
-    u16, "http://www.w3.org/2001/XMLSchema#unsignedShort",
-    u32, "http://www.w3.org/2001/XMLSchema#unsignedInt",
-    u64, "http://www.w3.org/2001/XMLSchema#unsignedLong",
 }
 
 impl Literal {

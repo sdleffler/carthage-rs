@@ -212,7 +212,7 @@ impl fmt::Display for NTriplesDocument {
 mod tests {
     use super::*;
 
-    use std::{fs::File, io::Read, path::PathBuf};
+    use std::{fs::File, path::PathBuf};
 
     macro_rules! parse_test_files {
         (@test $(#[$m:meta])* $test:ident) => {
@@ -222,6 +222,8 @@ mod tests {
             #[test]
             $(#[$m])*
             fn $test() {
+                use std::io::Read;
+
                 let string = {
                     let mut path = PathBuf::from("ntriples-tests");
                     path.push(String::from($path) + ".nt");

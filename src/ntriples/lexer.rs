@@ -202,7 +202,7 @@ impl<'input> Iterator for Lexer<'input> {
 mod tests {
     use super::*;
 
-    use std::{fs::File, io::Read, path::{Path, PathBuf}};
+    use std::{fs::File, path::PathBuf};
 
     #[test]
     fn lang_tag_0() {
@@ -264,6 +264,8 @@ mod tests {
             #[test]
             $(#[$m])*
             fn $test() {
+                use std::io::Read;
+
                 let string = {
                     let mut path = PathBuf::from("ntriples-tests");
                     path.push(String::from($path) + ".nt");

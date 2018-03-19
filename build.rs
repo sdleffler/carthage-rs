@@ -13,6 +13,7 @@ const ATOMS: &'static [&'static str] = &[
     "http://www.w3.org/2001/XMLSchema#short",
     "http://www.w3.org/2001/XMLSchema#int",
     "http://www.w3.org/2001/XMLSchema#long",
+
     "http://www.w3.org/2001/XMLSchema#unsignedByte",
     "http://www.w3.org/2001/XMLSchema#unsignedShort",
     "http://www.w3.org/2001/XMLSchema#unsignedInt",
