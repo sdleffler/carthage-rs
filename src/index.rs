@@ -27,7 +27,9 @@ pub struct IndexSet {
 
 impl IndexSet {
     /// All available indices.
-    pub const ALL: IndexSet = Self { bits: !1 }; // NB `!1` because the lowest bit is always unset.
+    pub const ALL: IndexSet = Self {
+        bits: !(1 << 0) & !(1 << 15),
+    }; // NB the 0th and 15th indices are valid but useless, so we leave them out of `ALL`.
 
     /// Empty index set.
     pub const EMPTY: IndexSet = Self { bits: 0 };
