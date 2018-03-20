@@ -191,7 +191,7 @@ mod tests {
 
         assert_eq!(
             set.find_approximation(Index::PREDICATE | Index::OBJECT),
-            Some(Index::OBJECT)
+            Some(Index::PREDICATE)
         );
         assert_eq!(set.find_approximation(Index::CONTEXT), None);
         assert_eq!(
@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(set.find_approximation(Index::empty()), None);
         assert_eq!(
             set.find_approximation(Index::all()),
-            Some(Index::SUBJECT | Index::PREDICATE | Index::CONTEXT)
+            Some(Index::SUBJECT | Index::PREDICATE | Index::OBJECT)
         );
     }
 }

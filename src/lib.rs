@@ -1,4 +1,4 @@
-#![feature(const_fn)]
+#![feature(const_fn, option_filter)]
 
 #[macro_use]
 extern crate bitflags;

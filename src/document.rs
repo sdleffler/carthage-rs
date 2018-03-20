@@ -1,7 +1,7 @@
 use std::{fmt, usize,
           collections::{Bound, HashMap, btree_map::{BTreeMap, Entry, Keys},
                         btree_set::{BTreeSet, Range}},
-          str::FromStr, sync::atomic::{AtomicUsize, Ordering}, u32};
+          iter::Fuse, str::FromStr, sync::atomic::{AtomicUsize, Ordering}, u32};
 
 use failure::*;
 use regex::Regex;
@@ -270,6 +270,50 @@ impl Term {
 
         index
     }
+
+    /// Check whether or not a quad "matches" this term.
+    fn is_match(&self, quad: &Quad) -> bool {
+        let subject_matches = self.subject
+            .as_ref()
+            .map(|subj| subj == &quad.subject)
+            .unwrap_or(true);
+
+        let predicate_matches = self.predicate
+            .as_ref()
+            .map(|pred| pred == &quad.predicate)
+            .unwrap_or(true);
+
+        let object_matches = self.object
+            .as_ref()
+            .map(|obj| obj == &quad.object)
+            .unwrap_or(true);
+
+        let context_matches = self.context
+            .as_ref()
+            .map(|ctx| ctx == &quad.context)
+            .unwrap_or(true);
+
+        subject_matches && predicate_matches && object_matches && context_matches
+    }
+
+    /// Remove all components of this term not tracked by the given index.
+    fn remove_untracked(mut self, idx: &Index) -> Self {
+        {
+            let Self {
+                ref mut subject,
+                ref mut predicate,
+                ref mut object,
+                ref mut context,
+            } = self;
+
+            *subject = subject.take().filter(|_| idx.contains(Index::SUBJECT));
+            *predicate = predicate.take().filter(|_| idx.contains(Index::PREDICATE));
+            *object = object.take().filter(|_| idx.contains(Index::OBJECT));
+            *context = context.take().filter(|_| idx.contains(Index::CONTEXT));
+        }
+
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -410,11 +454,9 @@ impl Document {
         self.unique.contains_key(quad)
     }
 
-    /// Search for a term which is supported in the index. This function will panic if the required
-    /// index is not supported by the store.
-    pub fn search_index(&self, term: Term) -> Search {
-        assert!(self.supported_indices.contains(term.index_of()));
-
+    /// Search the *index* for a given range, optionally filtered by a search term (in case the
+    /// given range term is just an approximation.)
+    fn search_index_range(&self, term: Term, filter: Option<Term>) -> Search {
         let start = (term.clone(), usize::MIN);
         let end = (term, usize::MAX);
 
@@ -422,7 +464,34 @@ impl Document {
             .range((Bound::Included(&start), Bound::Included(&end)));
         let quads = &self.quads;
 
-        Search { iter, quads }
+        Search {
+            inner: SearchInner::Index {
+                filter,
+                iter,
+                quads,
+            }.fuse(),
+        }
+    }
+
+    /// Search for a term which is supported in the index.
+    pub fn search(&self, search_term: Term) -> Search {
+        let term_index = search_term.index_of();
+
+        if self.supported_indices.contains(term_index) {
+            self.search_index_range(search_term, None)
+        } else if let Some(approx) = self.supported_indices.find_approximation(term_index) {
+            let filter = search_term.clone();
+            let term = search_term.remove_untracked(&approx);
+
+            self.search_index_range(term, Some(filter))
+        } else {
+            Search {
+                inner: SearchInner::Quads {
+                    filter: search_term,
+                    iter: self.unique.keys(),
+                }.fuse(),
+            }
+        }
     }
 
     /// Iterate over all quads in the store. This iterator goes in ascending order with respect
@@ -443,24 +512,56 @@ impl Extend<Quad> for Document {
     }
 }
 
+#[derive(Clone)]
+enum SearchInner<'a> {
+    Index {
+        filter: Option<Term>,
+        iter: Range<'a, (Term, usize)>,
+        quads: &'a HashMap<usize, Quad>,
+    },
+    Quads {
+        filter: Term,
+        iter: Keys<'a, Quad, usize>,
+    },
+}
+
+impl<'a> Iterator for SearchInner<'a> {
+    type Item = &'a Quad;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use self::SearchInner::*;
+
+        match *self {
+            Index {
+                ref filter,
+                ref mut iter,
+                quads,
+            } => iter.next().map(|&(_, ref id)| &quads[id]).filter(|quad| {
+                filter
+                    .as_ref()
+                    .map(|term| term.is_match(quad))
+                    .unwrap_or(true)
+            }),
+            Quads {
+                ref filter,
+                ref mut iter,
+            } => iter.next().filter(|quad| filter.is_match(quad)),
+        }
+    }
+}
+
 /// An iterator representing a search through a store's index for quads matching a specific
 /// search `Term`.
 #[derive(Clone)]
 pub struct Search<'a> {
-    iter: Range<'a, (Term, usize)>,
-    quads: &'a HashMap<usize, Quad>,
+    inner: Fuse<SearchInner<'a>>,
 }
 
 impl<'a> Iterator for Search<'a> {
     type Item = &'a Quad;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let Search {
-            ref mut iter,
-            quads,
-        } = *self;
-
-        iter.next().map(|&(_, ref id)| &quads[id])
+        self.inner.next()
     }
 }
 
