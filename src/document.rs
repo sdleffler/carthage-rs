@@ -19,7 +19,7 @@ static DOC_COUNTER: AtomicUsize = AtomicUsize::new(0);
 pub struct Iri(RdfAtom);
 
 /// Macro to create an IRI from a raw atom, which will only compile if the relevant string is
-/// interned.
+/// part of the statically interned set.
 #[macro_export]
 macro_rules! iri {
     ($interned:tt) => { Iri::unsafe_from_raw_atom(rdf_atom!($interned)) };
@@ -29,6 +29,8 @@ impl FromStr for Iri {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // NB the empty string is special-cased: while not a valid URL it represents references to
+        // a document being described; a sort of "this" IRI.
         let atom = if s != "" {
             let url = Url::parse(s)?;
             RdfAtom::from(url.as_str())
