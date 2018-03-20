@@ -1,7 +1,7 @@
 use std::{fmt, usize,
           collections::{Bound, HashMap, btree_map::{BTreeMap, Entry, Keys},
                         btree_set::{BTreeSet, Range}},
-          iter::Fuse, str::FromStr, sync::atomic::{AtomicUsize, Ordering}, u32};
+          str::FromStr, sync::atomic::{AtomicUsize, Ordering}, u32};
 
 use failure::*;
 use regex::Regex;
@@ -316,6 +316,24 @@ impl Term {
     }
 }
 
+/// An RDF quad-store which supports efficient configurable indexing.
+///
+/// There are sixteen possible indices for the quad-store to support, corresponding to the sixteen
+/// possible combinations of `Index::{SUBJECT, PREDICATE, OBJECT, CONTEXT}`. While allowed, the
+/// combinations `Index::all()` and `Index::empty()` - corresponding to a unique set of quads which
+/// is already kept internally and a useless index consisting of an unordered set of all quads in
+/// the map - have no reason to ever be used.
+///
+/// Internally, there are three main components:
+/// - The index, a `BTreeSet` used as a multimap, and queried for ranges whenever the quadstore is
+///   searched; elements are tuples of search terms and integer IDs.
+/// - The quad map, a `HashMap` from internal integer quad IDs to the quads themselves
+/// - The unique map, a `BTreeMap` from quads to internal integer IDs.
+///
+/// The unique map is used to find when a quad is already in the store, and the `quads` map exists
+/// as a more efficient alternative to simply storing every single quad after a relevant search
+/// term. Despite quads being stored in two places (and search terms being stored as well) strings
+/// are efficiently handled; all strings stored in a `Document` are interned.
 #[derive(Debug)]
 pub struct Document {
     doc_id: u32,
@@ -356,6 +374,8 @@ impl Document {
     /// Add new indices to the document's quadstore, to speed-up searches. This will add new search
     /// terms to the index, effectively populating any indices which are contained in the supplied
     /// index set but not already supported by the quadstore.
+    ///
+    /// Adding or removing indices will not add or remove quads from the store.
     pub fn add_indices(&mut self, index_set: IndexSet) {
         let diff = index_set - self.supported_indices;
         self.supported_indices |= index_set;
@@ -374,6 +394,8 @@ impl Document {
 
     /// Remove indices from the document's quadstore. This will remove any indices in the
     /// intersection of the document's supported indices and the supplied index set.
+    ///
+    /// Adding or removing indices will not add or remove quads from the store.
     pub fn remove_indices(&mut self, index_set: IndexSet) {
         let intersect = self.supported_indices & index_set;
         self.supported_indices -= index_set;
@@ -469,7 +491,7 @@ impl Document {
                 filter,
                 iter,
                 quads,
-            }.fuse(),
+            },
         }
     }
 
@@ -489,7 +511,7 @@ impl Document {
                 inner: SearchInner::Quads {
                     filter: search_term,
                     iter: self.unique.keys(),
-                }.fuse(),
+                },
             }
         }
     }
@@ -512,13 +534,21 @@ impl Extend<Quad> for Document {
     }
 }
 
+/// The internal search iterator.
 #[derive(Clone)]
 enum SearchInner<'a> {
+    /// If the search found an efficient index to use, then we have an available range query on the
+    /// index set, an optional search term filter in case the index isn't optimal, and a reference
+    /// to the quad map to resolve quad IDs to quad references.
     Index {
         filter: Option<Term>,
         iter: Range<'a, (Term, usize)>,
         quads: &'a HashMap<usize, Quad>,
     },
+
+    /// If the search didn't find any relevant index, we have to search through all quads. This
+    /// variant represents that with an iterator over the keys of the unique mapping as well as the
+    /// search term filter.
     Quads {
         filter: Term,
         iter: Keys<'a, Quad, usize>,
@@ -536,16 +566,18 @@ impl<'a> Iterator for SearchInner<'a> {
                 ref filter,
                 ref mut iter,
                 quads,
-            } => iter.next().map(|&(_, ref id)| &quads[id]).filter(|quad| {
-                filter
-                    .as_ref()
-                    .map(|term| term.is_match(quad))
-                    .unwrap_or(true)
-            }),
+            } => iter.map(|&(_, ref id)| &quads[id])
+                .filter(|quad| {
+                    filter
+                        .as_ref()
+                        .map(|term| term.is_match(quad))
+                        .unwrap_or(true)
+                })
+                .next(),
             Quads {
                 ref filter,
                 ref mut iter,
-            } => iter.next().filter(|quad| filter.is_match(quad)),
+            } => iter.filter(|quad| filter.is_match(quad)).next(),
         }
     }
 }
@@ -554,7 +586,7 @@ impl<'a> Iterator for SearchInner<'a> {
 /// search `Term`.
 #[derive(Clone)]
 pub struct Search<'a> {
-    inner: Fuse<SearchInner<'a>>,
+    inner: SearchInner<'a>,
 }
 
 impl<'a> Iterator for Search<'a> {

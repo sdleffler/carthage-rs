@@ -22,7 +22,6 @@ bitflags! {
 /// each set bit represents an `Index`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct IndexSet {
-    // The lowest bit of this bitset is *always* unset.
     bits: u16,
 }
 
