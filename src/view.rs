@@ -31,17 +31,17 @@ pub trait LiteralLike<'refr>: Ord + Hash + Clone {
 
 /// A "subject-like" value, which is either an IRI-like or blank-like value from an underlying
 /// document view.
-pub enum SubjectLike<'refr, D: ?Sized + GraphView<'refr>> {
+pub enum SubjectLike<'refr, D: GraphView<'refr>> {
     Iri(D::Iri),
     Blank(D::Blank),
 }
 
 /// A "predicate-like" value, consisting of an IRI-like value from an underlying document view.
-pub struct PredicateLike<'refr, D: ?Sized + GraphView<'refr>>(pub D::Iri);
+pub struct PredicateLike<'refr, D: GraphView<'refr>>(pub D::Iri);
 
 /// An "object-like" value, consisting of an IRI-like, blank-like, or literal-like value from an
 /// underlying document view.
-pub enum ObjectLike<'refr, D: ?Sized + GraphView<'refr>> {
+pub enum ObjectLike<'refr, D: GraphView<'refr>> {
     Iri(D::Iri),
     Blank(D::Blank),
     Literal(D::Literal),
@@ -49,7 +49,7 @@ pub enum ObjectLike<'refr, D: ?Sized + GraphView<'refr>> {
 
 /// A "quad-like" value, consisting of a subject-like value, predicate-like value, and
 /// object-like value, from an underlying document view.
-pub struct QuadLike<'refr, D: ?Sized + GraphView<'refr>> {
+pub struct QuadLike<'refr, D: GraphView<'refr>> {
     pub subject: SubjectLike<'refr, D>,
     pub predicate: PredicateLike<'refr, D>,
     pub object: ObjectLike<'refr, D>,
@@ -57,7 +57,7 @@ pub struct QuadLike<'refr, D: ?Sized + GraphView<'refr>> {
 }
 
 /// A "term-like" value for searching an underlying document view.
-pub struct TermLike<'refr, D: ?Sized + GraphView<'refr>> {
+pub struct TermLike<'refr, D: GraphView<'refr>> {
     pub subject: Option<SubjectLike<'refr, D>>,
     pub predicate: Option<PredicateLike<'refr, D>>,
     pub object: Option<ObjectLike<'refr, D>>,
@@ -66,7 +66,7 @@ pub struct TermLike<'refr, D: ?Sized + GraphView<'refr>> {
 
 /// Trait for types which can be used as a "document view", allowing them to be generically treated
 /// as an RDF graph.
-pub trait GraphView<'refr> {
+pub trait GraphView<'refr>: Sized {
     type Iri: IriLike<'refr>;
     type Blank: BlankLike<'refr>;
     type Literal: LiteralLike<'refr>;
