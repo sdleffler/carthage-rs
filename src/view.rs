@@ -19,7 +19,7 @@ pub trait BlankLike<'refr>: Ord + Hash + Clone {}
 
 /// A reference to a node from a document view, which behaves like a literal.
 ///
-/// Document views are designed to be capable of no-copy abstractions over structs. As such, it
+/// Graph views are designed to be capable of no-copy abstractions over structs. As such, it
 /// should be possible to directly attempt downcasting a `LiteralLike` type into a reference to a
 /// Rust value.
 pub trait LiteralLike<'refr>: Ord + Hash + Clone {
@@ -31,92 +31,59 @@ pub trait LiteralLike<'refr>: Ord + Hash + Clone {
 
 /// A "subject-like" value, which is either an IRI-like or blank-like value from an underlying
 /// document view.
-pub enum SubjectLike<'refr, D: ?Sized + DocumentView<'refr>> {
+pub enum SubjectLike<'refr, D: ?Sized + GraphView<'refr>> {
     Iri(D::Iri),
     Blank(D::Blank),
 }
 
 /// A "predicate-like" value, consisting of an IRI-like value from an underlying document view.
-pub struct PredicateLike<'refr, D: ?Sized + DocumentView<'refr>>(pub D::Iri);
+pub struct PredicateLike<'refr, D: ?Sized + GraphView<'refr>>(pub D::Iri);
 
 /// An "object-like" value, consisting of an IRI-like, blank-like, or literal-like value from an
 /// underlying document view.
-pub enum ObjectLike<'refr, D: ?Sized + DocumentView<'refr>> {
+pub enum ObjectLike<'refr, D: ?Sized + GraphView<'refr>> {
     Iri(D::Iri),
     Blank(D::Blank),
     Literal(D::Literal),
 }
 
-/// A "triple-like" value, consisting of a subject-like value, predicate-like value, and
+/// A "quad-like" value, consisting of a subject-like value, predicate-like value, and
 /// object-like value, from an underlying document view.
-pub struct TripleLike<'refr, D: ?Sized + DocumentView<'refr>> {
+pub struct QuadLike<'refr, D: ?Sized + GraphView<'refr>> {
     pub subject: SubjectLike<'refr, D>,
     pub predicate: PredicateLike<'refr, D>,
     pub object: ObjectLike<'refr, D>,
+    pub context: Option<SubjectLike<'refr, D>>,
 }
 
 /// A "term-like" value for searching an underlying document view.
-pub enum TermLike<'refr, D: ?Sized + DocumentView<'refr>> {
-    Subject(SubjectLike<'refr, D>),
-    Predicate(PredicateLike<'refr, D>),
-    Object(ObjectLike<'refr, D>),
-    Alibi(SubjectLike<'refr, D>, ObjectLike<'refr, D>),
-    Perpetrator(SubjectLike<'refr, D>, PredicateLike<'refr, D>),
-    Victim(PredicateLike<'refr, D>, ObjectLike<'refr, D>),
-}
-
-impl<'refr, D: ?Sized + DocumentView<'refr>> TermLike<'refr, D> {
-    /// Returns the subject-like value from the underlying search term, if it contains one.
-    pub fn as_subject(&self) -> Option<&SubjectLike<'refr, D>> {
-        match *self {
-            TermLike::Subject(ref subject_like)
-            | TermLike::Alibi(ref subject_like, _)
-            | TermLike::Perpetrator(ref subject_like, _) => Some(subject_like),
-            _ => None,
-        }
-    }
-
-    /// Returns the predicate-like value from the underlying search term, if it contains one.
-    pub fn as_predicate(&self) -> Option<&PredicateLike<'refr, D>> {
-        match *self {
-            TermLike::Predicate(ref predicate_like)
-            | TermLike::Perpetrator(_, ref predicate_like)
-            | TermLike::Victim(ref predicate_like, _) => Some(predicate_like),
-            _ => None,
-        }
-    }
-
-    /// Returns the object-like value from the underlying search term, if it contains one.
-    pub fn as_object(&self) -> Option<&ObjectLike<'refr, D>> {
-        match *self {
-            TermLike::Object(ref object_like)
-            | TermLike::Alibi(_, ref object_like)
-            | TermLike::Victim(_, ref object_like) => Some(object_like),
-            _ => None,
-        }
-    }
+pub struct TermLike<'refr, D: ?Sized + GraphView<'refr>> {
+    pub subject: Option<SubjectLike<'refr, D>>,
+    pub predicate: Option<PredicateLike<'refr, D>>,
+    pub object: Option<ObjectLike<'refr, D>>,
+    pub context: Option<Option<SubjectLike<'refr, D>>>,
 }
 
 /// Trait for types which can be used as a "document view", allowing them to be generically treated
 /// as an RDF graph.
-pub trait DocumentView<'refr> {
+pub trait GraphView<'refr> {
     type Iri: IriLike<'refr>;
     type Blank: BlankLike<'refr>;
     type Literal: LiteralLike<'refr>;
 
     fn get_iri(&self, iri: &Iri) -> Option<Self::Iri>;
 
-    type Triples: IntoIterator<Item = TripleLike<'refr, Self>>;
-    fn triples(&self) -> Self::Triples;
+    type Quads: IntoIterator<Item = QuadLike<'refr, Self>>;
+    fn quads(&self) -> Self::Quads;
 
-    type Search: IntoIterator<Item = TripleLike<'refr, Self>>;
+    type Search: IntoIterator<Item = QuadLike<'refr, Self>>;
     fn search(&self, term: TermLike<'refr, Self>) -> Self::Search;
 }
 
 /// Trait for a type family, dispatched on lifetimes, for extracting a document view type from an
-/// underlying `DocumentLike` type.
-pub trait DocumentLike<'refr> {
-    type View: DocumentView<'refr>;
+/// underlying `GraphLike` type.
+pub trait GraphLike<'refr> {
+    type View: GraphView<'refr>;
 
     fn as_view(&'refr self) -> Self::View;
 }
@@ -188,30 +155,32 @@ mod tests {
 
     struct FooView<'doc: 'refr, 'refr>(&'refr Foo<'doc>);
 
-    struct FooTriples<'doc: 'refr, 'refr>(usize, &'refr Foo<'doc>);
+    struct FooQuads<'doc: 'refr, 'refr>(usize, &'refr Foo<'doc>);
 
-    impl<'doc: 'refr, 'refr> Iterator for FooTriples<'doc, 'refr> {
-        type Item = TripleLike<'refr, FooView<'doc, 'refr>>;
+    impl<'doc: 'refr, 'refr> Iterator for FooQuads<'doc, 'refr> {
+        type Item = QuadLike<'refr, FooView<'doc, 'refr>>;
 
         fn next(&mut self) -> Option<Self::Item> {
             match self.0 {
                 0 => {
-                    let triple = TripleLike {
+                    let quad = QuadLike {
                         subject: SubjectLike::Iri(FooIri::This),
                         predicate: PredicateLike(FooIri::Bar),
                         object: ObjectLike::Literal(FooLit::U64(&self.1.bar)),
+                        context: None,
                     };
                     self.0 += 1;
-                    Some(triple)
+                    Some(quad)
                 }
                 1 => {
-                    let triple = TripleLike {
+                    let quad = QuadLike {
                         subject: SubjectLike::Iri(FooIri::This),
                         predicate: PredicateLike(FooIri::Baz),
                         object: ObjectLike::Literal(FooLit::Str(&self.1.baz)),
+                        context: None,
                     };
                     self.0 += 1;
-                    Some(triple)
+                    Some(quad)
                 }
                 _ => None,
             }
@@ -228,24 +197,26 @@ mod tests {
     struct FooSearch<'doc: 'refr, 'refr>(FooReturned, &'refr Foo<'doc>);
 
     impl<'doc: 'refr, 'refr> Iterator for FooSearch<'doc, 'refr> {
-        type Item = TripleLike<'refr, FooView<'doc, 'refr>>;
+        type Item = QuadLike<'refr, FooView<'doc, 'refr>>;
 
         fn next(&mut self) -> Option<Self::Item> {
             match self.0.bits().trailing_zeros() {
                 0 => {
                     self.0 -= FooReturned::BAR;
-                    Some(TripleLike {
+                    Some(QuadLike {
                         subject: SubjectLike::Iri(FooIri::This),
                         predicate: PredicateLike(FooIri::Bar),
                         object: ObjectLike::Literal(FooLit::U64(&self.1.bar)),
+                        context: None,
                     })
                 }
                 1 => {
                     self.0 -= FooReturned::BAZ;
-                    Some(TripleLike {
+                    Some(QuadLike {
                         subject: SubjectLike::Iri(FooIri::This),
                         predicate: PredicateLike(FooIri::Baz),
                         object: ObjectLike::Literal(FooLit::Str(&self.1.baz)),
+                        context: None,
                     })
                 }
                 _ => None,
@@ -253,7 +224,7 @@ mod tests {
         }
     }
 
-    impl<'doc: 'refr, 'refr> DocumentView<'refr> for FooView<'doc, 'refr> {
+    impl<'doc: 'refr, 'refr> GraphView<'refr> for FooView<'doc, 'refr> {
         type Iri = FooIri;
         type Blank = FooBlank;
         type Literal = FooLit<'refr>;
@@ -267,10 +238,10 @@ mod tests {
             }
         }
 
-        type Triples = FooTriples<'doc, 'refr>;
+        type Quads = FooQuads<'doc, 'refr>;
 
-        fn triples(&self) -> Self::Triples {
-            FooTriples(0, self.0)
+        fn quads(&self) -> Self::Quads {
+            FooQuads(0, self.0)
         }
 
         type Search = FooSearch<'doc, 'refr>;
@@ -278,31 +249,36 @@ mod tests {
         fn search(&self, term: TermLike<'refr, Self>) -> Self::Search {
             let mut set = FooReturned::all();
 
-            match term.as_subject() {
-                Some(&SubjectLike::Iri(FooIri::This)) => {}
-                Some(_) => set -= FooReturned::all(),
+            match term.subject {
+                Some(SubjectLike::Iri(ref iri)) if iri != &FooIri::This => {
+                    set = FooReturned::empty()
+                }
                 _ => {}
             }
 
-            match term.as_predicate() {
-                Some(&PredicateLike(FooIri::Bar)) => set &= FooReturned::BAR,
-                Some(&PredicateLike(FooIri::Baz)) => set &= FooReturned::BAZ,
-                Some(_) => set -= FooReturned::all(),
+            match term.predicate {
+                Some(PredicateLike(FooIri::Bar)) => set &= FooReturned::BAR,
+                Some(PredicateLike(FooIri::Baz)) => set &= FooReturned::BAZ,
+                Some(_) => set = FooReturned::empty(),
                 None => {}
             }
 
-            match term.as_object() {
-                Some(&ObjectLike::Literal(FooLit::U64(_))) => set &= FooReturned::BAR,
-                Some(&ObjectLike::Literal(FooLit::Str(_))) => set &= FooReturned::BAZ,
-                Some(_) => set -= FooReturned::all(),
+            match term.object {
+                Some(ObjectLike::Literal(FooLit::U64(_))) => set &= FooReturned::BAR,
+                Some(ObjectLike::Literal(FooLit::Str(_))) => set &= FooReturned::BAZ,
+                Some(_) => set = FooReturned::empty(),
                 None => {}
+            }
+
+            if term.context.is_some() {
+                set = FooReturned::empty();
             }
 
             FooSearch(set, self.0)
         }
     }
 
-    impl<'doc: 'refr, 'refr> DocumentLike<'refr> for Foo<'doc> {
+    impl<'doc: 'refr, 'refr> GraphLike<'refr> for Foo<'doc> {
         type View = FooView<'doc, 'refr>;
 
         fn as_view(&'refr self) -> Self::View {
