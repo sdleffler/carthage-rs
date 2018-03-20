@@ -17,6 +17,7 @@ mod rdf {
 
 #[macro_use]
 pub mod document;
+pub mod index;
 pub mod ntriples;
 pub mod view;
 pub mod xsd;

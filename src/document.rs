@@ -7,6 +7,7 @@ use failure::*;
 use regex::Regex;
 use url::Url;
 
+use index::{Index, Indices};
 use rdf::RdfAtom;
 
 /// Counter for uniquely identifying documents so that blank nodes from one document cannot be
@@ -205,44 +206,24 @@ impl Triple {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Term {
-    Subject(Subject),
-    Predicate(Predicate),
-    Object(Object),
-    Alibi(Subject, Object),
-    Perpetrator(Subject, Predicate),
-    Victim(Predicate, Object),
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Term {
+    pub subject: Option<Subject>,
+    pub predicate: Option<Predicate>,
+    pub object: Option<Object>,
+    pub context: Option<Option<Subject>>,
 }
 
 impl Term {
-    fn index_of(&self) -> Indices {
-        match *self {
-            Term::Subject(_) => Indices::BY_SUBJECT,
-            Term::Predicate(_) => Indices::BY_PREDICATE,
-            Term::Object(_) => Indices::BY_OBJECT,
-            Term::Alibi(..) => Indices::BY_ALIBI,
-            Term::Perpetrator(..) => Indices::BY_PERPETRATOR,
-            Term::Victim(..) => Indices::BY_VICTIM,
-        }
-    }
-}
+    fn index_of(&self) -> Index {
+        let mut index = Index::empty();
 
-bitflags! {
-    pub struct Indices: u8 {
-        const BY_SUBJECT     = 0b00000001;
-        const BY_PREDICATE   = 0b00000010;
-        const BY_OBJECT      = 0b00000100;
-        const BY_ALIBI       = 0b00001000;
-        const BY_PERPETRATOR = 0b00010000;
-        const BY_VICTIM      = 0b00100000;
-        const BY_SPO         = Self::BY_SUBJECT.bits
-                             | Self::BY_PREDICATE.bits
-                             | Self::BY_OBJECT.bits;
-        const BY_ALL         = Self::BY_SPO.bits
-                             | Self::BY_ALIBI.bits
-                             | Self::BY_PERPETRATOR.bits
-                             | Self::BY_VICTIM.bits;
+        index.set(Index::SUBJECT, self.subject.is_some());
+        index.set(Index::PREDICATE, self.predicate.is_some());
+        index.set(Index::OBJECT, self.object.is_some());
+        index.set(Index::CONTEXT, self.context.is_some());
+
+        index
     }
 }
 
@@ -313,40 +294,26 @@ impl Document {
             }
         };
 
-        if self.supported_indices.contains(Indices::BY_SUBJECT) {
-            self.index
-                .insert((Term::Subject(triple.subject.clone()), triple_id));
-        }
+        for supported_index in self.supported_indices {
+            let mut term = Term::default();
 
-        if self.supported_indices.contains(Indices::BY_PREDICATE) {
-            self.index
-                .insert((Term::Predicate(triple.predicate.clone()), triple_id));
-        }
+            if supported_index.contains(Index::SUBJECT) {
+                term.subject = Some(triple.subject.clone());
+            }
 
-        if self.supported_indices.contains(Indices::BY_OBJECT) {
-            self.index
-                .insert((Term::Object(triple.object.clone()), triple_id));
-        }
+            if supported_index.contains(Index::PREDICATE) {
+                term.predicate = Some(triple.predicate.clone());
+            }
 
-        if self.supported_indices.contains(Indices::BY_ALIBI) {
-            self.index.insert((
-                Term::Alibi(triple.subject.clone(), triple.object.clone()),
-                triple_id,
-            ));
-        }
+            if supported_index.contains(Index::OBJECT) {
+                term.object = Some(triple.object.clone());
+            }
 
-        if self.supported_indices.contains(Indices::BY_PERPETRATOR) {
-            self.index.insert((
-                Term::Perpetrator(triple.subject.clone(), triple.predicate.clone()),
-                triple_id,
-            ));
-        }
+            //             if supported_index.contains(Index::CONTEXT) {
+            //                 term.context = Some(triple.context.clone());
+            //             }
 
-        if self.supported_indices.contains(Indices::BY_VICTIM) {
-            self.index.insert((
-                Term::Victim(triple.predicate.clone(), triple.object.clone()),
-                triple_id,
-            ));
+            self.index.insert((term, triple_id));
         }
 
         self.triples.insert(triple_id, triple.clone());
