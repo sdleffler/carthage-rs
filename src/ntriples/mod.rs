@@ -10,8 +10,8 @@ use std::{fmt, borrow::Borrow, collections::HashMap, hash::{Hash, Hasher}, ops::
 
 use failure::*;
 
-use document::{Blank, Document, Literal, Object, Predicate, Subject, Triple};
-use index::Indices;
+use document::{Blank, Document, Literal, Object, Predicate, Quad, Subject};
+use index::IndexSet;
 use rdf::RdfAtom;
 
 /// Wrapper type for interned strings which hashes on the string data instead of the ID of the
@@ -71,7 +71,7 @@ impl FromStr for NTriplesDocument {
     type Err = Error;
 
     fn from_str<'a>(string: &'a str) -> Result<Self, Self::Err> {
-        let mut doc = NTriplesDocument::new(Document::new(Indices::ALL));
+        let mut doc = NTriplesDocument::new(Document::new(IndexSet::EMPTY));
         doc.extend_from_str(string)?;
         Ok(doc)
     }
@@ -122,10 +122,11 @@ impl NTriplesDocument {
                 }
             };
 
-            self.insert(Triple {
+            self.insert(Quad {
                 subject,
                 predicate,
                 object,
+                context: None,
             });
         }
 

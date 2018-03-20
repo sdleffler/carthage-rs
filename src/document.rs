@@ -7,7 +7,7 @@ use failure::*;
 use regex::Regex;
 use url::Url;
 
-use index::{Index, Indices};
+use index::{Index, IndexSet};
 use rdf::RdfAtom;
 
 /// Counter for uniquely identifying documents so that blank nodes from one document cannot be
@@ -128,6 +128,10 @@ impl<'a> From<&'a str> for Literal {
 }
 
 impl Literal {
+    /// Create a new string literal with the standard XML Schema string type. This is the "default"
+    /// string type for serialization formats like N-Triples, which will infer the XML string type
+    /// (IRI `http://www.w3.org/2001/XMLSchema#string`) for literals without datatype or language
+    /// tags.
     pub fn string<S: AsRef<str>>(string: S) -> Self {
         Literal {
             value: RdfAtom::from(string.as_ref()),
@@ -136,6 +140,9 @@ impl Literal {
         }
     }
 
+    /// Create a new language-tagged string literal with the RDF `langString` type, IRI
+    /// `http://www.w3.org/1999/02/22-rdf-syntax-ns#langString`. This is the string typed inferred
+    /// by formats like N-Triples or N-Quads when parsing string literals with language tags.
     pub fn lang_string<S: AsRef<str>>(string: S, lang: LangTag) -> Self {
         Literal {
             value: RdfAtom::from(string.as_ref()),
@@ -146,6 +153,8 @@ impl Literal {
         }
     }
 
+    /// Create a literal with a non-string or language-tagged string type, from the raw UTF-8
+    /// string and then the datatype IRI.
     pub fn typed<S: AsRef<str>>(string: S, ty: Iri) -> Self {
         Literal {
             value: RdfAtom::from(string.as_ref()),
@@ -154,14 +163,17 @@ impl Literal {
         }
     }
 
+    /// Get the value of this literal as a string slice.
     pub fn as_value(&self) -> &str {
         &self.value
     }
 
+    /// Get the datatype of this literal as an IRI.
     pub fn as_ty(&self) -> &Iri {
         &self.ty
     }
 
+    /// Get the language tag of this literal, only if the literal is a language-tagged string.
     pub fn as_lang_tag(&self) -> Option<&LangTag> {
         self.lang.as_ref()
     }
@@ -190,22 +202,54 @@ impl fmt::Display for LangTag {
     }
 }
 
-/// An RDF triple: subject, predicate, and object.
+/// An RDF quad: subject, predicate, and object.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Triple {
+pub struct Quad {
     pub subject: Subject,
     pub predicate: Predicate,
     pub object: Object,
+    pub context: Option<Subject>,
 }
 
-impl Triple {
-    /// Check whether or not all blank nodes in this triple originate from the given document.
+impl Quad {
+    /// Check whether or not all blank nodes in this quad originate from the given document.
     fn has_doc_id(&self, doc_id: u32) -> bool {
         // Predicates are only ever IRIs, no need to check.
         self.subject.has_doc_id(doc_id) && self.object.has_doc_id(doc_id)
+            && self.context
+                .as_ref()
+                .map(|ctx| ctx.has_doc_id(doc_id))
+                .unwrap_or(true)
+    }
+
+    /// Convert this quad into a search term by filtering subjects/predicates by index flags.
+    fn to_term_by_index(&self, index: Index) -> Term {
+        let mut term = Term::default();
+
+        if index.contains(Index::SUBJECT) {
+            term.subject = Some(self.subject.clone());
+        }
+
+        if index.contains(Index::PREDICATE) {
+            term.predicate = Some(self.predicate.clone());
+        }
+
+        if index.contains(Index::OBJECT) {
+            term.object = Some(self.object.clone());
+        }
+
+        if index.contains(Index::CONTEXT) {
+            term.context = Some(self.context.clone());
+        }
+
+        term
     }
 }
 
+/// A search term. This allows for selective searching for triples/quads with given
+/// subjects/predicates/objects/contexts. A `None` value for any field indicates that when
+/// searching, the given field should be a "wildcard" or "variable". To match on an empty context,
+/// use `Some(None)` as a value for the `context` field.
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Term {
     pub subject: Option<Subject>,
@@ -215,6 +259,7 @@ pub struct Term {
 }
 
 impl Term {
+    /// Check the index required to parse a given term.
     fn index_of(&self) -> Index {
         let mut index = Index::empty();
 
@@ -232,18 +277,18 @@ pub struct Document {
     doc_id: u32,
 
     next_blank: u32,
-    next_triple: usize,
+    next_quad: usize,
 
-    supported_indices: Indices,
+    supported_indices: IndexSet,
     index: BTreeSet<(Term, usize)>,
 
-    triples: HashMap<usize, Triple>,
-    unique: BTreeMap<Triple, usize>,
+    quads: HashMap<usize, Quad>,
+    unique: BTreeMap<Quad, usize>,
 }
 
 impl Document {
     /// Create a new RDF document which supports efficient indexing over the given search terms.
-    pub fn new(supported_indices: Indices) -> Self {
+    pub fn new(supported_indices: IndexSet) -> Self {
         let doc_id = {
             let tmp = DOC_COUNTER.fetch_add(1, Ordering::Relaxed);
             assert!(tmp <= u32::MAX as usize);
@@ -254,13 +299,54 @@ impl Document {
             doc_id,
 
             next_blank: 0,
-            next_triple: 0,
+            next_quad: 0,
 
             supported_indices,
             index: BTreeSet::new(),
 
-            triples: HashMap::new(),
+            quads: HashMap::new(),
             unique: BTreeMap::new(),
+        }
+    }
+
+    /// Add new indices to the document's quadstore, to speed-up searches. This will add new search
+    /// terms to the index, effectively populating any indices which are contained in the supplied
+    /// index set but not already supported by the quadstore.
+    pub fn add_indices(&mut self, index_set: IndexSet) {
+        let diff = index_set - self.supported_indices;
+        self.supported_indices |= index_set;
+        let Self {
+            index: ref mut quad_index,
+            ref quads,
+            ..
+        } = *self;
+
+        quad_index.extend(diff.into_iter().flat_map(|index| {
+            quads
+                .iter()
+                .map(move |(&id, quad)| (quad.to_term_by_index(index), id))
+        }));
+    }
+
+    /// Remove indices from the document's quadstore. This will remove any indices in the
+    /// intersection of the document's supported indices and the supplied index set.
+    pub fn remove_indices(&mut self, index_set: IndexSet) {
+        let intersect = self.supported_indices & index_set;
+        self.supported_indices -= index_set;
+        let Self {
+            index: ref mut quad_index,
+            ref quads,
+            ..
+        } = *self;
+
+        let to_remove = intersect.into_iter().flat_map(|index| {
+            quads
+                .iter()
+                .map(move |(&id, quad)| (quad.to_term_by_index(index), id))
+        });
+
+        for index_entry in to_remove {
+            quad_index.remove(&index_entry);
         }
     }
 
@@ -274,23 +360,23 @@ impl Document {
         Blank { doc_id, node_id }
     }
 
-    /// Insert a new triple into the store.
+    /// Insert a new quad into the store.
     ///
-    /// This function will panic if the triple contains a blank node which does not originate from
+    /// This function will panic if the quad contains a blank node which does not originate from
     /// this store.
-    pub fn insert(&mut self, triple: Triple) {
-        assert!(triple.has_doc_id(self.doc_id));
+    pub fn insert(&mut self, quad: Quad) {
+        assert!(quad.has_doc_id(self.doc_id));
 
-        let (triple, triple_id) = match self.unique.entry(triple) {
+        let (quad, quad_id) = match self.unique.entry(quad) {
             Entry::Occupied(_) => return,
             Entry::Vacant(vacant) => {
-                let triple = vacant.key().clone();
-                let triple_id = self.next_triple;
+                let quad = vacant.key().clone();
+                let quad_id = self.next_quad;
 
-                self.next_triple += 1;
-                vacant.insert(triple_id);
+                self.next_quad += 1;
+                vacant.insert(quad_id);
 
-                (triple, triple_id)
+                (quad, quad_id)
             }
         };
 
@@ -298,30 +384,30 @@ impl Document {
             let mut term = Term::default();
 
             if supported_index.contains(Index::SUBJECT) {
-                term.subject = Some(triple.subject.clone());
+                term.subject = Some(quad.subject.clone());
             }
 
             if supported_index.contains(Index::PREDICATE) {
-                term.predicate = Some(triple.predicate.clone());
+                term.predicate = Some(quad.predicate.clone());
             }
 
             if supported_index.contains(Index::OBJECT) {
-                term.object = Some(triple.object.clone());
+                term.object = Some(quad.object.clone());
             }
 
-            //             if supported_index.contains(Index::CONTEXT) {
-            //                 term.context = Some(triple.context.clone());
-            //             }
+            if supported_index.contains(Index::CONTEXT) {
+                term.context = Some(quad.context.clone());
+            }
 
-            self.index.insert((term, triple_id));
+            self.index.insert((term, quad_id));
         }
 
-        self.triples.insert(triple_id, triple.clone());
+        self.quads.insert(quad_id, quad.clone());
     }
 
-    /// Test if the document contains a triple.
-    pub fn contains(&self, triple: &Triple) -> bool {
-        self.unique.contains_key(triple)
+    /// Test if the document contains a quad.
+    pub fn contains(&self, quad: &Quad) -> bool {
+        self.unique.contains_key(quad)
     }
 
     /// Search for a term which is supported in the index. This function will panic if the required
@@ -334,13 +420,13 @@ impl Document {
 
         let iter = self.index
             .range((Bound::Included(&start), Bound::Included(&end)));
-        let triples = &self.triples;
+        let quads = &self.quads;
 
-        Search { iter, triples }
+        Search { iter, quads }
     }
 
-    /// Iterate over all triples in the store. This iterator goes in ascending order with respect
-    /// to the `Ord` instance of `Triple`.
+    /// Iterate over all quads in the store. This iterator goes in ascending order with respect
+    /// to the `Ord` instance of `Quad`.
     pub fn iter(&self) -> Iter {
         Iter {
             unique: self.unique.keys(),
@@ -348,44 +434,44 @@ impl Document {
     }
 }
 
-impl Extend<Triple> for Document {
+impl Extend<Quad> for Document {
     fn extend<I>(&mut self, iter: I)
     where
-        I: IntoIterator<Item = Triple>,
+        I: IntoIterator<Item = Quad>,
     {
-        iter.into_iter().for_each(|triple| self.insert(triple));
+        iter.into_iter().for_each(|quad| self.insert(quad));
     }
 }
 
-/// An iterator representing a search through a store's index for triples matching a specific
+/// An iterator representing a search through a store's index for quads matching a specific
 /// search `Term`.
 #[derive(Clone)]
 pub struct Search<'a> {
     iter: Range<'a, (Term, usize)>,
-    triples: &'a HashMap<usize, Triple>,
+    quads: &'a HashMap<usize, Quad>,
 }
 
 impl<'a> Iterator for Search<'a> {
-    type Item = &'a Triple;
+    type Item = &'a Quad;
 
     fn next(&mut self) -> Option<Self::Item> {
         let Search {
             ref mut iter,
-            triples,
+            quads,
         } = *self;
 
-        iter.next().map(|&(_, ref id)| &triples[id])
+        iter.next().map(|&(_, ref id)| &quads[id])
     }
 }
 
-/// An iterator over all triples in a document.
+/// An iterator over all quads in a document.
 #[derive(Clone)]
 pub struct Iter<'a> {
-    unique: Keys<'a, Triple, usize>,
+    unique: Keys<'a, Quad, usize>,
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = &'a Triple;
+    type Item = &'a Quad;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.unique.next()
